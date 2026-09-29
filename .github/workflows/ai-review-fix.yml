@@ -1,0 +1,82 @@
+# Workflow B：Docs PR へのレビューコメントをAIへの修正指示として、同じPRブランチへ修正commitをpushする
+name: AI review fix
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# 同じPRへの修正は順番に処理する
+concurrency:
+  group: ai-review-fix-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    # ループ・誤起動の防止：
+    #   - Approve では起動しない（Comment / Request changes のみ）
+    #   - bot のレビューは無視する
+    #   - repo の OWNER / MEMBER / COLLABORATOR のレビューのみ（public repo で第三者にAIを動かさせない）
+    #   - auto-doc が作る docs/ ブランチの、同一repo内のオープンなPRのみ
+    # 加えて、このjobの push は GITHUB_TOKEN で行うため新たな workflow を起動しない
+    if: >-
+      github.event.review.state != 'approved' &&
+      github.event.review.user.type != 'Bot' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) &&
+      github.event.pull_request.state == 'open' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'docs/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REVIEW_ID: ${{ github.event.review.id }}
+      AUTO_DOC_AI_MODE: ${{ vars.AUTO_DOC_AI_MODE || 'anthropic' }}
+    steps:
+      # AI処理ロジックは main（レビュー済み）のものを使い、PRブランチ上のコードは実行しない
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: tools
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          path: docs
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/automation/package-lock.json
+
+      - run: npm ci
+        working-directory: tools/automation
+
+      - name: Apply review comments with AI
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: >-
+          node tools/automation/src/cli/apply-review.js
+          --pr "$PR_NUMBER"
+          --review-id "$REVIEW_ID"
+          --docs-dir docs
+          --out "$RUNNER_TEMP/auto-doc"
+
+      - name: Push fix to the same PR and reply
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/automation/scripts/push-review-fix.sh docs "$RUNNER_TEMP/auto-doc" "$PR_NUMBER"
+
+      - name: Report failure on the PR
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "🤖 AIによるレビュー修正に失敗しました。ログ：$RUN_URL"

@@ -1,0 +1,32 @@
+{
+  "model": "claude-opus-5-5",
+  "maxTokens": 16000,
+  "effort": {
+    "analyze": "medium",
+    "generate": "medium",
+    "reviewFix": "medium"
+  },
+  "maxDiffChars": 80000,
+  "maxReviewFixRounds": 10,
+  "allowedDocDirs": ["overview", "features", "manual", "changes"],
+  "documentCategories": {
+    "overview": {
+      "label": "機能一覧",
+      "defaultFiles": ["overview/features.md"]
+    },
+    "feature_spec": {
+      "label": "機能仕様",
+      "defaultFiles": ["features/calculator.md"],
+      "template": "templates/feature.md"
+    },
+    "manual": {
+      "label": "操作マニュアル",
+      "defaultFiles": ["manual/calculator.md"],
+      "template": "templates/manual.md"
+    },
+    "change_log": {
+      "label": "変更記録",
+      "template": "templates/change.md"
+    }
+  }
+}
